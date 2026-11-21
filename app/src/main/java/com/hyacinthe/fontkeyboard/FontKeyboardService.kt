@@ -1,5 +1,8 @@
 package com.hyacinthe.fontkeyboard
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
@@ -15,6 +18,7 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 
 class FontKeyboardService : InputMethodService() {
 
@@ -144,6 +148,9 @@ class FontKeyboardService : InputMethodService() {
             gravity = Gravity.CENTER_VERTICAL
         }
         bar.addView(small("🎨") { themeIdx = (themeIdx + 1) % themes.size; save(); render() })
+        bar.addView(small("📋") { pastePlain() })
+        bar.addView(small("🔠") { pasteOrConvert() })
+        bar.addView(small("📄") { copyText() })
 
         val sv = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -287,6 +294,64 @@ class FontKeyboardService : InputMethodService() {
         b.addView(d)
         b.addView(key("⏎", 1.4f, cur.special, fast = true) { enter() })
         root.addView(b)
+    }
+
+    // ---------- Copier / coller ----------
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clipText(): String? {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = cm.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        return clip.getItemAt(0).coerceToText(this)?.toString()
+    }
+
+    /** Transforme un texte normal dans la police sélectionnée. */
+    private fun convert(s: String): String {
+        val sb = StringBuilder()
+        for (c in s) sb.append(FONTS[fontIdx].map(c))
+        return sb.toString()
+    }
+
+    private fun pastePlain() {
+        val t = clipText()
+        if (t.isNullOrEmpty()) { toast("Presse-papiers vide"); return }
+        endWord()
+        commit(t)
+    }
+
+    /** Texte sélectionné : le convertit. Sinon : colle le presse-papiers converti. */
+    private fun pasteOrConvert() {
+        val ic = currentInputConnection ?: return
+        endWord()
+        val sel = ic.getSelectedText(0)
+        if (!sel.isNullOrEmpty()) {
+            val out = convert(sel.toString())
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            commit(out)
+            return
+        }
+        val t = clipText()
+        if (t.isNullOrEmpty()) { toast("Presse-papiers vide"); return }
+        commit(convert(t))
+    }
+
+    /** Copie la sélection, ou tout le texte du champ s'il n'y a pas de sélection. */
+    private fun copyText() {
+        val ic = currentInputConnection ?: return
+        var txt: CharSequence? = ic.getSelectedText(0)
+        if (txt.isNullOrEmpty()) {
+            val before = ic.getTextBeforeCursor(10000, 0) ?: ""
+            val after = ic.getTextAfterCursor(10000, 0) ?: ""
+            txt = before.toString() + after.toString()
+        }
+        if (txt.isNullOrEmpty()) { toast("Rien à copier"); return }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("Font Keyboard", txt))
+        toast("Copié")
     }
 
     // ---------- Saisie ----------
@@ -513,7 +578,7 @@ class FontKeyboardService : InputMethodService() {
         gravity = Gravity.CENTER
         setTextColor(cur.text)
         background = round(cur.special)
-        setPadding(dp(10), dp(8), dp(10), dp(8))
+        setPadding(dp(9), dp(8), dp(9), dp(8))
         layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
         setOnClickListener { onClick() }
     }
