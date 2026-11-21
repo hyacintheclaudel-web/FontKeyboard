@@ -33,7 +33,6 @@ class FontKeyboardService : InputMethodService() {
     private var cur: Theme = themes[0]
     private var themeIdx = 0
     private var fontIdx = 0
-    private var azerty = true
     private var mode = 0            // 0 = lettres, 1 = chiffres/accents, 2 = maths
     private var shiftState = 0      // 0 = off, 1 = une lettre, 2 = verrouillé
     private var lastShift = 0L
@@ -49,7 +48,6 @@ class FontKeyboardService : InputMethodService() {
         val p = getSharedPreferences("fk", MODE_PRIVATE)
         fontIdx = p.getInt("font", 0).coerceIn(0, FONTS.size - 1)
         themeIdx = p.getInt("theme", 0).coerceIn(0, themes.size - 1)
-        azerty = p.getBoolean("azerty", true)
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -77,7 +75,7 @@ class FontKeyboardService : InputMethodService() {
         }
         if (mode != 0) bottomAlt()
         getSharedPreferences("fk", MODE_PRIVATE).edit()
-            .putInt("font", fontIdx).putInt("theme", themeIdx).putBoolean("azerty", azerty).apply()
+            .putInt("font", fontIdx).putInt("theme", themeIdx).apply()
     }
 
     private fun fontBar(): View {
@@ -86,7 +84,6 @@ class FontKeyboardService : InputMethodService() {
             gravity = Gravity.CENTER_VERTICAL
         }
         bar.addView(small("🎨") { themeIdx = (themeIdx + 1) % themes.size; render() })
-        bar.addView(small(if (azerty) "AZ" else "QW") { azerty = !azerty; render() })
 
         val sv = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -124,8 +121,7 @@ class FontKeyboardService : InputMethodService() {
     private fun letters() {
         letterKeys.clear()
         shiftKey = null
-        val rows = if (azerty) listOf("azertyuiop", "qsdfghjklm", "wxcvbn")
-        else listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        val rows = listOf("azertyuiop", "qsdfghjklm", "wxcvbn")
 
         rows.forEachIndexed { i, r ->
             val row = hrow()
