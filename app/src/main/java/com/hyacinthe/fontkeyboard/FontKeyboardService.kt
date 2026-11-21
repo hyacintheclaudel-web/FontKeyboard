@@ -63,9 +63,13 @@ class FontKeyboardService : InputMethodService() {
         val p = getSharedPreferences("fk", MODE_PRIVATE)
         fontIdx = p.getInt("font", 0).coerceIn(0, FONTS.size - 1)
         themeIdx = p.getInt("theme", 0).coerceIn(0, themes.size - 1)
-        p.getString("learned", "")?.split(",")?.forEach { e ->
-            val parts = e.split(":")
-            if (parts.size == 2) parts[1].toIntOrNull()?.let { learned[parts[0]] = it }
+        val saved = p.getString("learned", "") ?: ""
+        for (entry in saved.split(",")) {
+            val parts = entry.split(":")
+            if (parts.size == 2) {
+                val n = parts[1].toIntOrNull()
+                if (n != null) learned[parts[0]] = n
+            }
         }
     }
 
@@ -105,8 +109,12 @@ class FontKeyboardService : InputMethodService() {
     }
 
     private fun saveLearned() {
-        val s = learned.entries.joinToString(",") { it.key + ":" + it.value }
-        getSharedPreferences("fk", MODE_PRIVATE).edit().putString("learned", s).apply()
+        val sb = StringBuilder()
+        for ((w, c) in learned) {
+            if (sb.isNotEmpty()) sb.append(",")
+            sb.append(w).append(":").append(c)
+        }
+        getSharedPreferences("fk", MODE_PRIVATE).edit().putString("learned", sb.toString()).apply()
     }
 
     // ---------- Affichage ----------
@@ -128,13 +136,15 @@ class FontKeyboardService : InputMethodService() {
     private fun suggestionBar(): View {
         val bar = hrow()
         for (i in 0 until 3) {
-            val tv = TextView(this).apply {
-                textSize = 16f
-                gravity = Gravity.CENTER
-                maxLines = 1
-                setTextColor(cur.text)
-                layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f)
-                setOnClickListener { (tag as? String)?.let { applySuggestion(it) } }
+            val tv = TextView(this)
+            tv.textSize = 16f
+            tv.gravity = Gravity.CENTER
+            tv.maxLines = 1
+            tv.setTextColor(cur.text)
+            tv.layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f)
+            tv.setOnClickListener {
+                val s = tv.tag as? String
+                if (s != null) applySuggestion(s)
             }
             sugViews.add(tv)
             bar.addView(tv)
@@ -198,7 +208,7 @@ class FontKeyboardService : InputMethodService() {
             }
             r.forEach { ch ->
                 val k = key(ch.toString(), fast = true) { typeLetter(ch) }
-                letterKeys.add(k to ch)
+                letterKeys.add(Pair(k, ch))
                 row.addView(k)
             }
             if (i == 2) {
@@ -253,9 +263,9 @@ class FontKeyboardService : InputMethodService() {
                 val row = hrow()
                 chunk.forEach { s -> row.addView(key(s, size = 18f) { type(s) }) }
                 repeat(8 - chunk.size) {
-                    row.addView(View(this).apply {
-                        layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) }
-                    })
+                    val spacer = View(this)
+                    spacer.layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) }
+                    row.addView(spacer)
                 }
                 grid.addView(row)
             }
@@ -306,7 +316,8 @@ class FontKeyboardService : InputMethodService() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = cm.primaryClip ?: return null
         if (clip.itemCount == 0) return null
-        return clip.getItemAt(0).coerceToText(this)?.toString()
+        val t: CharSequence? = clip.getItemAt(0).coerceToText(this)
+        return t?.toString()
     }
 
     /** Transforme un texte normal dans la police sélectionnée. */
@@ -318,7 +329,7 @@ class FontKeyboardService : InputMethodService() {
 
     private fun pastePlain() {
         val t = clipText()
-        if (t.isNullOrEmpty()) { toast("Presse-papiers vide"); return }
+        if (t == null || t.isEmpty()) { toast("Presse-papiers vide"); return }
         endWord()
         commit(t)
     }
@@ -327,28 +338,31 @@ class FontKeyboardService : InputMethodService() {
     private fun pasteOrConvert() {
         val ic = currentInputConnection ?: return
         endWord()
-        val sel = ic.getSelectedText(0)
-        if (!sel.isNullOrEmpty()) {
+        val sel: CharSequence? = ic.getSelectedText(0)
+        if (sel != null && sel.isNotEmpty()) {
             val out = convert(sel.toString())
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             commit(out)
             return
         }
         val t = clipText()
-        if (t.isNullOrEmpty()) { toast("Presse-papiers vide"); return }
+        if (t == null || t.isEmpty()) { toast("Presse-papiers vide"); return }
         commit(convert(t))
     }
 
     /** Copie la sélection, ou tout le texte du champ s'il n'y a pas de sélection. */
     private fun copyText() {
         val ic = currentInputConnection ?: return
-        var txt: CharSequence? = ic.getSelectedText(0)
-        if (txt.isNullOrEmpty()) {
-            val before = ic.getTextBeforeCursor(10000, 0) ?: ""
-            val after = ic.getTextAfterCursor(10000, 0) ?: ""
-            txt = before.toString() + after.toString()
+        val sel: CharSequence? = ic.getSelectedText(0)
+        var txt = ""
+        if (sel != null && sel.isNotEmpty()) {
+            txt = sel.toString()
+        } else {
+            val before: CharSequence? = ic.getTextBeforeCursor(10000, 0)
+            val after: CharSequence? = ic.getTextAfterCursor(10000, 0)
+            txt = (before?.toString() ?: "") + (after?.toString() ?: "")
         }
-        if (txt.isNullOrEmpty()) { toast("Rien à copier"); return }
+        if (txt.isEmpty()) { toast("Rien à copier"); return }
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Font Keyboard", txt))
         toast("Copié")
@@ -356,254 +370,4 @@ class FontKeyboardService : InputMethodService() {
 
     // ---------- Saisie ----------
 
-    /** Écrit du texte brut, sans toucher au mot en cours. */
-    private fun commit(s: String) {
-        currentInputConnection?.commitText(s, 1)
-    }
-
-    /** Écrit un caractère qui termine le mot (espace, ponctuation, symbole). */
-    private fun type(s: String) {
-        endWord()
-        commit(s)
-    }
-
-    private fun typeLetter(ch: Char) {
-        val up = shiftState > 0
-        val c = if (up) ch.uppercaseChar() else ch
-        val m = FONTS[fontIdx].map(c)
-        commit(m)
-        addToWord(ch, m, up)
-        if (shiftState == 1) { shiftState = 0; updateShift() }
-    }
-
-    private fun typeAccent(ch: Char) {
-        val m = FONTS[fontIdx].map(ch)
-        commit(m)
-        addToWord(ch, m, false)
-    }
-
-    private fun doDelete() {
-        sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
-        if (lens.isNotEmpty()) {
-            val l = lens.removeAt(lens.size - 1)
-            mapped.setLength(mapped.length - l)
-            wordPlain.setLength(wordPlain.length - 1)
-            updateSuggestions()
-        }
-    }
-
-    private fun toggleShift() {
-        val now = System.currentTimeMillis()
-        shiftState = when {
-            shiftState == 2 -> 0
-            shiftState == 1 && now - lastShift < 350 -> 2
-            shiftState == 1 -> 0
-            else -> 1
-        }
-        lastShift = now
-        updateShift()
-    }
-
-    private fun updateShift() {
-        letterKeys.forEach { (tv, c) ->
-            tv.text = (if (shiftState > 0) c.uppercaseChar() else c).toString()
-        }
-        shiftKey?.apply {
-            text = if (shiftState == 2) "AA" else "⇧"
-            background = round(if (shiftState > 0) cur.accent else cur.special)
-        }
-    }
-
-    private fun enter() {
-        endWord()
-        val opts = currentInputEditorInfo?.imeOptions ?: 0
-        val action = opts and EditorInfo.IME_MASK_ACTION
-        val noEnterAction = (opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
-        if (!noEnterAction && action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
-            currentInputConnection?.performEditorAction(action)
-        } else {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
-        }
-    }
-
-    // ---------- Suggestions ----------
-
-    private fun norm(s: String): String {
-        val sb = StringBuilder(s.length)
-        for (c in s.lowercase()) {
-            sb.append(
-                when (c) {
-                    'é', 'è', 'ê', 'ë' -> 'e'
-                    'à', 'â', 'ä' -> 'a'
-                    'ù', 'û', 'ü' -> 'u'
-                    'î', 'ï' -> 'i'
-                    'ô', 'ö' -> 'o'
-                    'ç' -> 'c'
-                    'ñ' -> 'n'
-                    else -> c
-                }
-            )
-        }
-        return sb.toString()
-    }
-
-    private fun addToWord(ch: Char, m: String, up: Boolean) {
-        if (wordPlain.isEmpty()) {
-            upperFirst = up
-            allUpper = true
-        }
-        if (!up) allUpper = false
-        wordPlain.append(ch)
-        mapped.append(m)
-        lens.add(m.length)
-        updateSuggestions()
-    }
-
-    private fun resetWord() {
-        wordPlain.setLength(0)
-        mapped.setLength(0)
-        lens.clear()
-        updateSuggestions()
-    }
-
-    private fun endWord() {
-        if (wordPlain.length >= 2) learn(wordPlain.toString())
-        resetWord()
-    }
-
-    private fun learn(w: String) {
-        learned[w] = (learned[w] ?: 0) + 1
-        if (learned.size > 1500) {
-            val it = learned.entries.iterator()
-            repeat(100) { if (it.hasNext()) { it.next(); it.remove() } }
-        }
-        learnCount++
-        if (learnCount % 15 == 0) saveLearned()
-    }
-
-    private fun applyCase(s: String): String = when {
-        allUpper && wordPlain.length >= 2 -> s.uppercase()
-        upperFirst -> s.replaceFirstChar { it.uppercaseChar() }
-        else -> s
-    }
-
-    private fun computeSuggestions(): List<String> {
-        if (wordPlain.isEmpty()) return emptyList()
-        val typed = wordPlain.toString()
-        val p = norm(typed)
-        val scores = HashMap<String, Int>()
-        for (i in DICT_WORDS.indices) {
-            if (dictNorm[i].startsWith(p)) scores[DICT_WORDS[i]] = 1000 - minOf(i, 999)
-        }
-        for ((w, c) in learned) {
-            if (norm(w).startsWith(p)) scores[w] = (scores[w] ?: 0) + c * 200
-        }
-        return scores.entries
-            .filter { it.key != typed }
-            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key.length })
-            .take(3)
-            .map { applyCase(it.key) }
-    }
-
-    private fun updateSuggestions() {
-        if (sugViews.isEmpty()) return
-        val list = computeSuggestions()
-        for (i in sugViews.indices) {
-            val s = list.getOrNull(i)
-            sugViews[i].text = s ?: ""
-            sugViews[i].tag = s
-        }
-    }
-
-    private fun applySuggestion(s: String) {
-        val ic = currentInputConnection ?: return
-        if (wordPlain.isEmpty()) return
-        val before = ic.getTextBeforeCursor(mapped.length, 0)?.toString()
-        if (before != mapped.toString()) { resetWord(); return }
-        val out = s.map { FONTS[fontIdx].map(it) }.joinToString("")
-        ic.beginBatchEdit()
-        ic.deleteSurroundingText(mapped.length, 0)
-        ic.commitText("$out ", 1)
-        ic.endBatchEdit()
-        learn(s.lowercase())
-        resetWord()
-    }
-
-    // ---------- Outils de vue ----------
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun round(color: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(7).toFloat()
-    }
-
-    private fun hrow() = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-    }
-
-    /** fast = true : la touche tape dès que le doigt touche l'écran. */
-    private fun key(
-        label: String,
-        weight: Float = 1f,
-        bg: Int = cur.key,
-        size: Float = 20f,
-        fast: Boolean = false,
-        onClick: () -> Unit
-    ): TextView = TextView(this).apply {
-        text = label
-        textSize = size
-        gravity = Gravity.CENTER
-        setTextColor(cur.text)
-        background = round(bg)
-        layoutParams = LinearLayout.LayoutParams(0, dp(46), weight).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) }
-        if (fast) {
-            setOnTouchListener { v, e ->
-                when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { v.alpha = 0.6f; onClick() }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.alpha = 1f
-                }
-                true
-            }
-        } else {
-            setOnClickListener { onClick() }
-        }
-    }
-
-    private fun small(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
-        text = label
-        textSize = 15f
-        gravity = Gravity.CENTER
-        setTextColor(cur.text)
-        background = round(cur.special)
-        setPadding(dp(9), dp(8), dp(9), dp(8))
-        layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
-        setOnClickListener { onClick() }
-    }
-
-    /** Touche qui se répète quand on la maintient (effacer). */
-    private fun repeatable(v: View, action: () -> Unit) {
-        val r = object : Runnable {
-            override fun run() {
-                action()
-                handler.postDelayed(this, 60)
-            }
-        }
-        v.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    v.alpha = 0.6f
-                    action()
-                    handler.postDelayed(r, 400)
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    v.alpha = 1f
-                    handler.removeCallbacks(r)
-                }
-            }
-            true
-        }
-    }
-}
+    /** Écrit du texte brut, sans toucher au mot en cours
